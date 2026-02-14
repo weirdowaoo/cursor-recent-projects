@@ -2,6 +2,22 @@
 
 Control Cursor directly from Raycast
 
+## 安装说明
+
+1. 安装依赖：
+   ```bash
+   npm install
+   ```
+
+2. 构建扩展：
+   ```bash
+   npm run build
+   ```
+
+3. 在 Raycast 中运行 "Import Extension"，然后选择此项目文件夹
+
+---
+
 [![raycast-cross-extension-badge]][raycast-cross-extension-link]
 
 ![Cursor screenshot](./metadata/cursor-1.png)
