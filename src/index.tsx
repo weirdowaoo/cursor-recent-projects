@@ -1,11 +1,11 @@
 import { ActionPanel, Action, Grid, Icon, showToast, open, Toast, LaunchProps, Color } from "@raycast/api";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { basename, dirname } from "path";
 import tildify from "tildify";
 import { fileURLToPath } from "url";
 import { useRecentEntries } from "./db";
 import type { RemoveMethods } from "./db";
-import { keepSectionOrder, closeOtherWindows, terminalApp, showGitBranch, gitBranchColor, layout } from "./preferences";
+import { keepSectionOrder, closeOtherWindows, terminalApp, layout } from "./preferences";
 import { EntryType } from "./types";
 import type { EntryLike, PinMethods } from "./types";
 import type { LaunchContext } from "./integrations/types";
@@ -16,7 +16,6 @@ import {
   isFolderEntry,
   isRemoteEntry,
   isRemoteWorkspaceEntry,
-  isValidHexColor,
   isWorkspaceEntry,
 } from "./utils";
 import {
@@ -29,7 +28,6 @@ import {
 } from "./grid-or-list";
 import { usePinnedEntries } from "./pinned";
 import { ProjectProvider, useProject } from "./contexts/ProjectContext";
-import { getGitBranch } from "./utils/git";
 
 export default function Command(props: LaunchProps<{ launchContext: LaunchContext }>) {
   const { data, isLoading, error, ...removeMethods } = useRecentEntries();
@@ -129,27 +127,6 @@ function LocalItem(props: { entry: EntryLike; uri: string; pinned?: boolean } & 
   const prettyPath = tildify(path);
   const subtitle = dirname(prettyPath);
   const keywords = path.split("/");
-  const [gitBranch, setGitBranch] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function fetchGitBranch() {
-      try {
-        const branch = await getGitBranch(path);
-        if (mounted) {
-          setGitBranch(branch);
-        }
-      } catch (error) {
-        // Silently handle errors - they're already handled in getGitBranch
-      }
-    }
-
-    fetchGitBranch();
-    return () => {
-      mounted = false;
-    };
-  }, [path, name]);
 
   const getTitle = (revert = false) => {
     return `Open in Cursor ${closeOtherWindows !== revert ? "and Close Other" : ""}`;
@@ -162,21 +139,16 @@ function LocalItem(props: { entry: EntryLike; uri: string; pinned?: boolean } & 
   };
 
   const accessories = [];
-  if (showGitBranch && gitBranch) {
-    const branchColor =
-      gitBranchColor && isValidHexColor(gitBranchColor)
-        ? { light: gitBranchColor, dark: gitBranchColor, adjustContrast: false }
-        : Color.Green;
-    accessories.push({
-      tag: {
-        value: gitBranch,
-        color: branchColor,
-      },
-      tooltip: `Git Branch: ${gitBranch}`,
-    });
-  }
+  // Display localhost tag for local projects
+  accessories.push({
+    tag: {
+      value: "localhost",
+      color: Color.Blue,
+    },
+    tooltip: "Local Project",
+  });
 
-  const displaySubtitle = showGitBranch && gitBranch && layout === "grid" ? `${gitBranch} • ${subtitle}` : subtitle;
+  const displaySubtitle = layout === "grid" ? `localhost • ${subtitle}` : subtitle;
 
   return (
     <ListOrGridItem
@@ -241,6 +213,66 @@ function RemoteItem(
 
   const uri = props.uri.replace("vscode-remote://", "cursor://vscode-remote/");
 
+  // Extract hostname and path from the URI for display
+  const getRemoteInfo = () => {
+    try {
+      const url = new URL(props.uri);
+      const pathname = decodeURIComponent(url.pathname);
+
+      // Extract hostname from remoteAuthority
+      let hostname = "";
+      if (isRemoteEntry(props.entry) || isRemoteWorkspaceEntry(props.entry)) {
+        const remoteAuthority = (props.entry as any).remoteAuthority;
+        // remoteAuthority format: "ssh-remote+{hex-encoded-json}"
+        if (remoteAuthority && remoteAuthority.includes("+")) {
+          try {
+            const hexPart = remoteAuthority.split("+")[1];
+            // Decode hex to string
+            const decoded = Buffer.from(hexPart, "hex").toString("utf-8");
+            // Parse JSON to get hostName
+            const parsed = JSON.parse(decoded);
+            hostname = parsed.hostName || "";
+          } catch (decodeError) {
+            // If decoding fails, try using it as-is
+            hostname = remoteAuthority.split("+")[1] || "";
+          }
+        } else if (remoteAuthority) {
+          hostname = remoteAuthority;
+        }
+      }
+
+      // Fallback to subtitle if no hostname extracted
+      if (!hostname && props.subtitle) {
+        hostname = props.subtitle;
+      }
+
+      // Build the display subtitle - only show path, not hostname
+      let displaySubtitle = "/";
+      if (pathname && pathname !== "/" && pathname !== "") {
+        const pathDir = dirname(pathname);
+        displaySubtitle = pathDir === "/" || pathDir === "." ? pathname : pathDir;
+      }
+
+      return { hostname, displaySubtitle };
+    } catch (error) {
+      return { hostname: "", displaySubtitle: props.subtitle || "/" };
+    }
+  };
+
+  const remoteInfo = getRemoteInfo();
+
+  // Add hostname tag for remote projects
+  const accessories = [];
+  if (remoteInfo.hostname) {
+    accessories.push({
+      tag: {
+        value: remoteInfo.hostname,
+        color: Color.Orange,
+      },
+      tooltip: `Remote Host: ${remoteInfo.hostname}`,
+    });
+  }
+
   const getTitle = (revert = false) => {
     return `Open in Cursor ${closeOtherWindows !== revert ? "and Close Other" : ""}`;
   };
@@ -259,9 +291,10 @@ function RemoteItem(
     <ListOrGridItem
       id={props.pinned ? remotePath : undefined}
       title={remotePath}
-      subtitle={props.subtitle || "/"}
+      subtitle={remoteInfo.displaySubtitle}
       icon="remote.svg"
       content="remote.svg"
+      accessories={accessories}
       actions={
         <ActionPanel>
           <ActionPanel.Section>
